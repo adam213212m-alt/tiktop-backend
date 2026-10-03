@@ -10,7 +10,7 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false }
 });
 
-// دالة لإنشاء الجداول تلقائياً عند تشغيل السيرفر لأول مرة
+// دالة لإنشاء الجداول وإضافة البيانات التجريبية تلقائياً
 async function initDB() {
     try {
         await pool.query(`
@@ -45,9 +45,34 @@ async function initDB() {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         `);
-        console.log("تم التحقق من جداول قاعدة البيانات أو إنشاؤها بنجاح!");
+
+        // إدخال الهدايا الافتراضية (بما فيها تاج الصنّاع ID = 3)
+        await pool.query(`
+            INSERT INTO gifts (id, name, cost_coins, animation_type) VALUES 
+            (1, 'الوردة (Rose)', 1, 'rose_anim'),
+            (2, 'الخاتم اللامع (Ring)', 50, 'ring_anim'),
+            (3, 'تاج الصنّاع (Creator''s Crown)', 500, 'crown_anim')
+            ON CONFLICT (id) DO NOTHING;
+        `);
+
+        // إضافة مستخدمين تجريبيين تلقائياً (مرسل وصانع محتوى)
+        await pool.query(`
+            INSERT INTO users (id, username, email) VALUES (1, 'ahmad_sender', 'ahmad@test.com') 
+            ON CONFLICT (id) DO NOTHING;
+            
+            INSERT INTO wallets (user_id, coins_balance, creator_earnings) VALUES (1, 1000, 0.00) 
+            ON CONFLICT (user_id) DO NOTHING;
+
+            INSERT INTO users (id, username, email) VALUES (2, 'creator_sarah', 'sarah@test.com') 
+            ON CONFLICT (id) DO NOTHING;
+            
+            INSERT INTO wallets (user_id, coins_balance, creator_earnings) VALUES (2, 0, 0.00) 
+            ON CONFLICT (user_id) DO NOTHING;
+        `);
+
+        console.log("تم إعداد قاعدة البيانات والمستخدمين التجريبيين بنجاح!");
     } catch (err) {
-        console.error("خطأ في إنشاء الجداول:", err);
+        console.error("خطأ في تهيئة قاعدة البيانات:", err);
     }
 }
 
@@ -79,8 +104,11 @@ app.post('/api/send-gift', async (req, res) => {
 
         await pool.query('BEGIN');
         
+        // خصم العملات من المرسل
         await pool.query('UPDATE wallets SET coins_balance = coins_balance - $1 WHERE user_id = $2', [cost, sender_id]);
+        // إضافة 75% لصانع المحتوى
         await pool.query('UPDATE wallets SET creator_earnings = creator_earnings + $1 WHERE user_id = $2', [creatorRevenue, creator_id]);
+        // تسجيل المعاملة
         await pool.query(
             'INSERT INTO transactions (sender_id, creator_id, gift_id, coins_spent, creator_revenue, platform_revenue) VALUES ($1, $2, $3, $4, $5, $6)',
             [sender_id, creator_id, gift_id, cost, creatorRevenue, platformRevenue]
@@ -91,7 +119,7 @@ app.post('/api/send-gift', async (req, res) => {
         res.status(200).json({ 
             success: true, 
             message: 'تم إرسال الهدية بنجاح!', 
-            details: { cost, creatorRevenue } 
+            details: { cost, creatorRevenue, platformRevenue } 
         });
 
     } catch (err) {
